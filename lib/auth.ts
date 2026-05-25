@@ -9,8 +9,6 @@ import { prisma } from "@/lib/prisma";
 
 const SESSION_COOKIE_NAME = "expense_tracker_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
-const PERSONAL_USER_EMAIL = "personal@ai-expense-tracker.local";
-const PERSONAL_USER_NAME = process.env.DEFAULT_USER_NAME || "Orion";
 
 type SessionPayload = {
   userId: string;
@@ -47,15 +45,10 @@ function createPasswordHash(password: string) {
 
 function verifyPasswordHash(password: string, storedHash: string) {
   const [salt, hash] = storedHash.split(":");
-
-  if (!salt || !hash) {
-    return false;
-  }
-
+  if (!salt || !hash) return false;
   const derived = scryptSync(password, salt, 64).toString("hex");
   const left = Buffer.from(hash, "hex");
   const right = Buffer.from(derived, "hex");
-
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
@@ -65,32 +58,22 @@ function serializeSession(payload: SessionPayload) {
 }
 
 function parseSession(token: string | undefined) {
-  if (!token) {
-    return null;
-  }
+  if (!token) return null;
 
   const [encoded, signature] = token.split(".");
-  if (!encoded || !signature) {
-    return null;
-  }
+  if (!encoded || !signature) return null;
 
   const expectedSignature = signValue(encoded);
   const left = Buffer.from(signature);
   const right = Buffer.from(expectedSignature);
 
-  if (left.length !== right.length || !timingSafeEqual(left, right)) {
-    return null;
-  }
+  if (left.length !== right.length || !timingSafeEqual(left, right)) return null;
 
   try {
     const payload = JSON.parse(
       Buffer.from(encoded, "base64url").toString("utf8")
     ) as SessionPayload;
-
-    if (!payload.userId || payload.exp <= Date.now()) {
-      return null;
-    }
-
+    if (!payload.userId || payload.exp <= Date.now()) return null;
     return payload;
   } catch {
     return null;
@@ -104,7 +87,7 @@ function serializeUser(user: {
   lineUserId: string | null;
   monthlyBudget: number;
   notificationEnabled: boolean;
-}) {
+}): SessionUser {
   return {
     id: user.id,
     name: user.name,
@@ -112,134 +95,41 @@ function serializeUser(user: {
     lineUserId: user.lineUserId,
     monthlyBudget: user.monthlyBudget,
     notificationEnabled: user.notificationEnabled,
-  } satisfies SessionUser;
+  };
 }
 
-async function claimPersonalData(userId: string) {
-  await prisma.expense.updateMany({
-    where: {
-      OR: [
-        {
-          userId: null,
-        },
-        {
-          userId: {
-            not: userId,
-          },
-        },
-      ],
-    },
-    data: {
-      userId,
-    },
-  });
-
-  await prisma.recurringSubscription.updateMany({
-    where: {
-      userId: {
-        not: userId,
-      },
-    },
-    data: {
-      userId,
-    },
-  });
-
-  await prisma.pushSubscription.updateMany({
-    where: {
-      userId: {
-        not: userId,
-      },
-    },
-    data: {
-      userId,
-    },
-  });
-}
-
+// Only used by LINE webhook — finds or creates a user for incoming LINE messages
 export async function getOrCreatePersonalUser(lineUserId?: string) {
-  const [personalUser, lineUser, firstLineUser, firstUser] = await Promise.all([
-    prisma.user.findUnique({
-      where: {
-        email: PERSONAL_USER_EMAIL,
-      },
-    }),
-    lineUserId
-      ? prisma.user.findUnique({
-          where: {
-            lineUserId,
-          },
-        })
-      : null,
-    prisma.user.findFirst({
-      where: {
-        lineUserId: {
-          not: null,
-        },
-      },
-      orderBy: {
-        createdAt: "asc",
-      },
-    }),
-    prisma.user.findFirst({
-      orderBy: {
-        createdAt: "asc",
-      },
-    }),
-  ]);
-
-  let user = personalUser || firstUser || lineUser || firstLineUser;
-
-  if (!user) {
-    user = await prisma.user.create({
-      data: {
-        email: PERSONAL_USER_EMAIL,
-        name: PERSONAL_USER_NAME,
-        lineUserId,
-      },
-    });
-
+  if (lineUserId) {
+    // Fast path: user already linked to this LINE ID
+    const existing = await prisma.user.findUnique({ where: { lineUserId } });
+    if (existing) return existing;
   }
 
-  if (lineUserId && lineUser && lineUser.id !== user.id) {
-    await prisma.user.update({
-      where: {
-        id: lineUser.id,
-      },
-      data: {
-        lineUserId: null,
-      },
-    });
-  }
+  // Find the earliest user (personal/default account)
+  const firstUser = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
 
-  if (lineUserId && !user.lineUserId) {
-    try {
-      user = await prisma.user.update({
-        where: {
-          id: user.id,
-        },
-        data: {
-          lineUserId,
-        },
-      });
-    } catch {
-      const lineUser = await prisma.user.findUnique({
-        where: {
-          lineUserId,
-        },
-      });
-
-      if (lineUser) {
-        user = lineUser;
+  if (firstUser) {
+    if (lineUserId && !firstUser.lineUserId) {
+      // Link LINE ID to existing default user
+      try {
+        return await prisma.user.update({
+          where: { id: firstUser.id },
+          data: { lineUserId },
+        });
+      } catch {
+        return firstUser;
       }
     }
+    return firstUser;
   }
 
-  await claimPersonalData(user.id);
-
-  return prisma.user.findUniqueOrThrow({
-    where: {
-      id: user.id,
+  // No users at all — create one
+  return prisma.user.create({
+    data: {
+      name: process.env.DEFAULT_USER_NAME || "Orion",
+      email: "personal@ai-expense-tracker.local",
+      lineUserId,
     },
   });
 }
@@ -258,7 +148,6 @@ export async function setSession(userId: string) {
     userId,
     exp: Date.now() + SESSION_MAX_AGE_SECONDS * 1000,
   });
-
   cookieStore.set(SESSION_COOKIE_NAME, payload, {
     httpOnly: true,
     sameSite: "lax",
@@ -273,19 +162,19 @@ export async function clearSession() {
   cookieStore.delete(SESSION_COOKIE_NAME);
 }
 
-export async function getSessionUser() {
+/**
+ * Returns the logged-in user from session cookie.
+ * Returns null if no valid session — middleware handles the redirect.
+ */
+export async function getSessionUser(): Promise<SessionUser | null> {
   const cookieStore = await cookies();
   const session = parseSession(cookieStore.get(SESSION_COOKIE_NAME)?.value);
 
-  if (!session) {
-    const user = await getOrCreatePersonalUser();
-    return serializeUser(user);
-  }
+  if (!session) return null;
 
+  // Single DB query — just fetch the user by ID from session
   const user = await prisma.user.findUnique({
-    where: {
-      id: session.userId,
-    },
+    where: { id: session.userId },
     select: {
       id: true,
       name: true,
@@ -296,30 +185,21 @@ export async function getSessionUser() {
     },
   });
 
-  if (user) {
-    const personalUser = await getOrCreatePersonalUser(user.lineUserId ?? undefined);
-    return serializeUser(personalUser);
-  }
+  if (!user) return null;
 
-  const fallbackUser = await getOrCreatePersonalUser();
-  return serializeUser(fallbackUser);
+  return serializeUser(user);
 }
 
-export async function requireSessionUser() {
+export async function requireSessionUser(): Promise<SessionUser | null> {
   return getSessionUser();
 }
 
 export async function claimOrphanedExpenses(userId: string) {
   const users = await prisma.user.count();
-
   if (users === 1) {
     await prisma.expense.updateMany({
-      where: {
-        userId: null,
-      },
-      data: {
-        userId,
-      },
+      where: { userId: null },
+      data: { userId },
     });
   }
 }

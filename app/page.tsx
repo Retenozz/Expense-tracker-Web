@@ -718,21 +718,10 @@ export default function HomePage() {
   }
 
   if (!user) {
+    // Middleware will redirect to /login — show minimal loading while it takes effect
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(15,118,110,0.16),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(249,115,22,0.14),_transparent_24%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)] px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
-        <div className="mx-auto flex min-h-[70vh] max-w-3xl items-center justify-center">
-          <section className="w-full rounded-[2rem] border border-white/70 bg-white/90 p-8 text-center shadow-[0_30px_120px_-50px_rgba(15,23,42,0.45)]">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-teal-50 text-teal-700">
-              <LoaderCircle className="h-5 w-5 animate-spin" />
-            </div>
-            <h1 className="mt-5 text-2xl font-semibold tracking-tight text-slate-950">
-              กำลังเปิดแดชบอร์ด
-            </h1>
-            <p className="mt-2 text-sm text-slate-500">
-              ถ้าหน้านี้ค้างอยู่ ลองรีเฟรชอีกครั้งครับ
-            </p>
-          </section>
-        </div>
+      <main className="min-h-screen flex items-center justify-center bg-[radial-gradient(circle_at_top_left,_rgba(15,118,110,0.16),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(249,115,22,0.14),_transparent_24%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)]">
+        <LoaderCircle className="h-8 w-8 animate-spin text-teal-600" />
       </main>
     );
   }
@@ -758,15 +747,25 @@ export default function HomePage() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row">
-              <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 px-4 py-3 text-sm text-slate-700">
-                <div className="flex items-center gap-2 font-semibold text-slate-950">
-                  <UserRound className="h-4 w-4" />
-                  {user.lineUserId ? "LINE พร้อมใช้" : "พื้นที่ส่วนตัว"}
-                </div>
-                <p className="mt-1 text-slate-500">
-                  {user.lineUserId ? "ข้อความใน LINE จะเข้าหน้านี้" : "เปิดใช้งานอัตโนมัติ"}
-                </p>
-              </div>
+            <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 px-4 py-3 text-sm text-slate-700">
+            <div className="flex items-center gap-2 font-semibold text-slate-950">
+            <UserRound className="h-4 w-4" />
+            {user.lineUserId ? "LINE พร้อมใช้" : "พื้นที่ส่วนตัว"}
+            </div>
+            <p className="mt-1 text-slate-500">
+            {user.lineUserId ? "ข้อความใน LINE จะเข้าหน้านี้" : "เปิดใช้งานอัตโนมัติ"}
+            </p>
+            </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                  window.location.href = "/login";
+                }}
+                className="inline-flex items-center justify-center rounded-[1.5rem] border border-slate-200 bg-white/90 px-4 py-3 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                ออกจากระบบ
+              </button>
             </div>
           </div>
         </section>
